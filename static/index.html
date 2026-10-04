@@ -3,31 +3,68 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>再保险合约与巨灾暴露管理</title>
+  <title>未决赔款准备金评估批次</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #17212b; }
-    main { max-width: 960px; margin: auto; }
-    button { padding: .55rem .9rem; cursor: pointer; }
+    main { max-width: 1080px; margin: auto; }
+    button { padding: .5rem .85rem; cursor: pointer; margin: .15rem; }
     pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    .hint { color: #5a6b7b; font-size: .9rem; }
+    h2 { margin-top: 1.6rem; }
   </style>
 </head>
 <body>
 <main>
-  <h1>再保险合约与巨灾暴露管理</h1>
-  <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
-  <pre id="output">点击上方按钮读取服务状态。</pre>
+  <h1>未决赔款准备金评估批次</h1>
+  <p class="hint">最小演示页。批次冻结参与合约、赔案版本、估算规则与待复核金额；封账前赔案变化只失效重算受影响合约，财务复核后转正式。</p>
+
+  <h2>查询</h2>
+  <button onclick="show('/api/stats')">状态统计</button>
+  <button onclick="show('/api/batches')">评估批次</button>
+  <button onclick="show('/api/contracts')">再保合约</button>
+  <label class="hint">ID <input id="id" size="4" value="1"></label>
+  <button onclick="showEntity('contracts')">合约详情</button>
+  <button onclick="showEntity('batches')">批次详情</button>
+  <button onclick="showEntity('contracts','audit')">合约审计</button>
+  <button onclick="showEntity('batches','audit')">批次审计</button>
+
+  <h2>动作（需对应角色）</h2>
+  <div>
+    <button onclick="act('create')">建批 actuary</button>
+    <button onclick="act('refresh')">刷新受影响合约 actuary</button>
+    <button onclick="act('close')">封账 actuary</button>
+    <button onclick="act('post')">财务复核转正式 finance</button>
+  </div>
+
+  <pre id="output">点击上方按钮查看服务数据。</pre>
 </main>
 <script>
-const headers = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo"};
-async function show(path) {
-  const response = await fetch(path, {headers});
-  const data = await response.json();
-  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+const out = document.getElementById("output");
+const id = () => document.getElementById("id").value;
+async function call(path, method="GET", role="admin", body=null) {
+  const headers = {"X-User-Id":"demo-"+role, "X-Role":role};
+  if (body) headers["Content-Type"] = "application/json";
+  const response = await fetch(path, {method, headers, body: body ? JSON.stringify(body) : null});
+  return response.json();
 }
-document.getElementById("load").onclick = () => show("/api/records?limit=20");
-document.getElementById("stats").onclick = () => show("/api/stats");
+function render(data) {
+  out.textContent = JSON.stringify(data, null, 2);
+}
+async function show(path) {
+  render(await call(path));
+}
+async function showEntity(kind, suffix="") {
+  const tail = suffix ? "/" + suffix : "";
+  show("/api/" + kind + "/" + id() + tail);
+}
+async function act(kind) {
+  const bid = id();
+  if (kind === "create") return render(await call("/api/batches", "POST", "actuary",
+      {period:"2026-09", idempotency_key:"DEMO-2026-09", ibnr_factor:0.1}));
+  if (kind === "refresh") return render(await call(`/api/batches/${bid}/refresh`, "POST", "actuary"));
+  if (kind === "close") return render(await call(`/api/batches/${bid}/close`, "POST", "actuary"));
+  if (kind === "post") return render(await call(`/api/batches/${bid}/post`, "POST", "finance", {confirmed:true}));
+}
 </script>
 </body>
 </html>

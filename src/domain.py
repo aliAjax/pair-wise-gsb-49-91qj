@@ -1,4 +1,5 @@
 """领域基础类型与输入校验。"""
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
@@ -95,3 +96,24 @@ def text_list(data: Dict[str, Any], key: str, minimum: int = 0) -> List[str]:
     if len(value) < minimum:
         raise ValidationError("%s至少需要%s项" % (key, minimum))
     return [item.strip() for item in value]
+
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def iso_date(data: Dict[str, Any], key: str, required: bool = True):
+    value = data.get(key)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if required:
+            raise ValidationError("%s不能为空(YYYY-MM-DD)" % key)
+        return None
+    if not isinstance(value, str) or not _DATE_RE.match(value.strip()):
+        raise ValidationError("%s必须是YYYY-MM-DD日期" % key)
+    return value.strip()
+
+
+def period_label(data: Dict[str, Any], key: str = "period") -> str:
+    value = text(data, key)
+    if not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", value):
+        raise ValidationError("%s必须是YYYY-MM月度标签" % key)
+    return value
