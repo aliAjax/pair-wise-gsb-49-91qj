@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from .audit import AuditRecorder
 from .domain import Actor, PermissionDenied, text
 from .repository import Repository
+from .reserves import ValuationService
 from .rules import DomainRules
 
 
@@ -12,6 +13,7 @@ class Service:
         self.repository = repository
         self.rules = rules
         self.audit = audit or AuditRecorder(repository)
+        self.valuation = ValuationService(repository, audit=self.audit)
 
     @staticmethod
     def _actor(actor: Actor) -> Actor:

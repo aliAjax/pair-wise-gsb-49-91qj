@@ -6,8 +6,9 @@ from .domain import Actor, Conflict, ValidationError, boolean, choice, integer, 
 
 INITIAL_STATE = "quoted"
 CREATE_ROLES = {'underwriter'}
-ACTION_ROLES = {'bind': {'underwriter'}, 'submit_claim': {'claims_officer'}, 'calculate': {'claims_officer'}, 'settle': {'finance'}, 'reject': {'finance', 'claims_officer'}}
-TRANSITIONS = {'bind': {'quoted': 'bound'}, 'submit_claim': {'bound': 'claim_submitted'}, 'calculate': {'claim_submitted': 'calculated'}, 'settle': {'calculated': 'settled'}, 'reject': {'claim_submitted': 'rejected', 'calculated': 'rejected'}}
+ACTION_ROLES = {'bind': {'underwriter'}, 'submit_claim': {'claims_officer'}, 'calculate': {'claims_officer'}, 'recalculate': {'claims_officer'}, 'withdraw_claim': {'claims_officer'}, 'settle': {'finance'}, 'reject': {'finance', 'claims_officer'}}
+TRANSITIONS = {'bind': {'quoted': 'bound'}, 'submit_claim': {'bound': 'claim_submitted'}, 'calculate': {'claim_submitted': 'calculated'}, 'recalculate': {'calculated': 'calculated'}, 'withdraw_claim': {'claim_submitted': 'claim_withdrawn', 'calculated': 'claim_withdrawn'}, 'settle': {'calculated': 'settled'}, 'reject': {'claim_submitted': 'rejected', 'calculated': 'rejected'}}
+OPEN_CLAIM_STATES = {'claim_submitted', 'calculated'}
 
 
 class DomainRules:
@@ -34,9 +35,20 @@ class DomainRules:
         number(p, "loss_amount", 0)
         number(p, "reinstatement_pct", 0, 1)
         number(p, "aggregate_prior", 0)
+        loss_date = p.get("loss_date", "")
+        if loss_date not in ("", None):
+            self.require_loss_date(loss_date)
+            p["loss_date"] = str(loss_date).strip()
         if limit <= attachment:
             raise ValidationError("赔款限额必须高于起赔点")
         return p
+
+    @staticmethod
+    def require_loss_date(value: Any) -> str:
+        import re
+        if not isinstance(value, str) or not re.match(r"^\d{4}-\d{2}-\d{2}$", value.strip()):
+            raise ValidationError("损失日期必须为YYYY-MM-DD")
+        return value.strip()
 
     def prepare_create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         p = self.validate_create(payload)
@@ -79,6 +91,9 @@ class DomainRules:
         elif action == "submit_claim":
             changes["claim_number"] = text(data, "claim_number")
             changes["claim_event_id"] = text(data, "event_id")
+            loss_date = data.get("loss_date", p.get("loss_date", ""))
+            if loss_date:
+                changes["loss_date"] = self.require_loss_date(loss_date)
             summary = "赔案已提交"
         elif action == "calculate":
             loss = number(data, "approved_loss", 0)
@@ -87,7 +102,26 @@ class DomainRules:
             changes["approved_loss"] = loss
             changes["recoverable_amount"] = round(recovery, 2)
             changes["reinstatement_premium"] = round(recovery * float(p["reinstatement_pct"]), 2)
+            loss_date = data.get("loss_date")
+            if loss_date:
+                changes["loss_date"] = self.require_loss_date(loss_date)
             summary = "摊回金额已计算"
+        elif action == "recalculate":
+            loss = number(data, "approved_loss", 0)
+            previous = float(p.get("approved_loss", 0))
+            width = float(p["layer_width"])
+            recovery = min(max(0.0, loss - float(p["attachment"])), width) * float(p["cession_pct"])
+            changes["approved_loss"] = loss
+            changes["recoverable_amount"] = round(recovery, 2)
+            changes["reinstatement_premium"] = round(recovery * float(p["reinstatement_pct"]), 2)
+            loss_date = data.get("loss_date")
+            if loss_date:
+                changes["loss_date"] = self.require_loss_date(loss_date)
+            summary = "核定金额由%s调整为%s，准备金依据需重算" % (previous, loss)
+        elif action == "withdraw_claim":
+            changes["withdraw_reason"] = text(data, "withdraw_reason")
+            changes["recoverable_amount"] = 0.0
+            summary = "赔案已撤销"
         elif action == "settle":
             if float(p["recoverable_amount"]) <= 0:
                 raise ValidationError("无可结算摊回")

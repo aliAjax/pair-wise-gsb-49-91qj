@@ -12,6 +12,11 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+ENGAGEMENTS_RE = re.compile(r"^/api/records/(\d+)/engagements$")
+BATCH_RE = re.compile(r"^/api/batches/(\d+)$")
+BATCH_ITEMS_RE = re.compile(r"^/api/batches/(\d+)/items$")
+BATCH_AUDIT_RE = re.compile(r"^/api/batches/(\d+)/audit$")
+BATCH_ITEM_REPAIR_RE = re.compile(r"^/api/batches/(\d+)/items/(\d+)/repair$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -84,6 +89,32 @@ def make_handler(service: Any, static_dir: Path):
                 if match:
                     self._send(200, {"items": service.timeline(self._actor(), int(match.group(1)))})
                     return
+                match = ENGAGEMENTS_RE.match(parsed.path)
+                if match:
+                    self._send(200, service.valuation.engagement_detail(self._actor(), int(match.group(1))))
+                    return
+                if parsed.path == "/api/batches":
+                    query = parse_qs(parsed.query)
+                    self._send(200, {"items": service.valuation.list_batches(
+                        self._actor(), state=query.get("state", [None])[0], limit=int(query.get("limit", ["100"])[0]))})
+                    return
+                if parsed.path == "/api/batches/stats":
+                    self._send(200, service.valuation.stats(self._actor()))
+                    return
+                match = BATCH_RE.match(parsed.path)
+                if match:
+                    self._send(200, service.valuation.get_batch(self._actor(), int(match.group(1))))
+                    return
+                match = BATCH_ITEMS_RE.match(parsed.path)
+                if match:
+                    query = parse_qs(parsed.query)
+                    self._send(200, {"items": service.valuation.list_items(
+                        self._actor(), int(match.group(1)), status=query.get("status", [None])[0])})
+                    return
+                match = BATCH_AUDIT_RE.match(parsed.path)
+                if match:
+                    self._send(200, {"items": service.valuation.timeline(self._actor(), int(match.group(1)))})
+                    return
                 if parsed.path == "/api/stats":
                     self._send(200, service.stats(self._actor()))
                     return
@@ -98,6 +129,25 @@ def make_handler(service: Any, static_dir: Path):
                 if parsed.path == "/api/records":
                     record = service.create(self._actor(), body.get("reference", ""), body.get("data", {}))
                     self._send(201, record)
+                    return
+                if parsed.path == "/api/batches":
+                    batch = service.valuation.create_batch(
+                        self._actor(), body.get("reference", ""), body.get("period", ""), body.get("rules", {}))
+                    self._send(201 if not batch.get("idempotent_replay") else 200, batch)
+                    return
+                batch_actions = {"resume": service.valuation.resume_batch, "refresh": service.valuation.refresh_batch,
+                                 "seal": service.valuation.seal_batch, "post": service.valuation.post_batch}
+                action_match = re.match(r"^/api/batches/(\d+)/(resume|refresh|seal|post)$", parsed.path)
+                if action_match:
+                    batch = batch_actions[action_match.group(2)](self._actor(), int(action_match.group(1)))
+                    self._send(200, batch)
+                    return
+                match = BATCH_ITEM_REPAIR_RE.match(parsed.path)
+                if match:
+                    loss_date = body.get("loss_date", "")
+                    item = service.valuation.repair_item(
+                        self._actor(), int(match.group(1)), int(match.group(2)), loss_date)
+                    self._send(200, item)
                     return
                 match = ACTION_RE.match(parsed.path)
                 if match:
